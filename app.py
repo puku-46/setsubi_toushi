@@ -14,7 +14,7 @@ st.set_page_config(
 st.title("📊 設備投資計画フォーム 自動集約ツール")
 st.markdown("""
 各部署から回収した「設備投資計画フォーム（Excel）」をまとめてドラッグ＆ドロップしてください。
-右端の「投資効果予測」などの列も含め、横幅がA4サイズ1ページ内に綺麗に収まるよう自動調整します。
+右端の「投資効果予測」等の全項目がA4横1ページ幅にピッタリ収まるよう調整して出力します。
 """)
 
 TARGET_SHEET_KEYWORDS = [
@@ -97,7 +97,6 @@ if uploaded_files:
                     ws = wb[matched_sheet]
                     data_df_list = combined_rows[key]
 
-                    # 転記処理
                     if data_df_list:
                         all_data_df = pd.concat(
                             data_df_list, ignore_index=True
@@ -107,6 +106,15 @@ if uploaded_files:
                         if "No." in all_data_df.columns:
                             all_data_df["No."] = range(1, num_records + 1)
 
+                        # 元のテンプレートの合計行の位置を取得
+                        original_total_row = None
+                        for r in range(9, ws.max_row + 1):
+                            val = str(ws.cell(row=r, column=2).value).strip()
+                            if val in ["合計", "計"]:
+                                original_total_row = r
+                                break
+
+                        # 9行目から実データを転記
                         start_row = 9
                         for r_idx, row in all_data_df.iterrows():
                             current_row = start_row + r_idx
@@ -120,56 +128,46 @@ if uploaded_files:
 
                         last_data_row = start_row + num_records - 1
 
-                        # 合計行を探す
-                        total_row_idx = None
-                        for r in range(start_row, ws.max_row + 1):
-                            if str(ws.cell(row=r, column=2).value).strip() in [
-                                "合計",
-                                "計",
-                            ]:
-                                total_row_idx = r
-                                break
-
-                        # 空行を非表示
+                        # 実データ行と合計行の間の「不要な空白行」を物理削除
                         if (
-                            total_row_idx
-                            and total_row_idx > last_data_row + 1
+                            original_total_row
+                            and original_total_row > last_data_row + 1
                         ):
-                            for r in range(
-                                last_data_row + 1, total_row_idx
-                            ):
-                                ws.row_dimensions[r].hidden = True
-                            end_print_row = total_row_idx
-                        else:
-                            end_print_row = (
-                                total_row_idx if total_row_idx else ws.max_row
+                            delete_count = (
+                                original_total_row - (last_data_row + 1)
                             )
+                            ws.delete_rows(
+                                last_data_row + 1, amount=delete_count
+                            )
+                            end_print_row = last_data_row + 1  # 合計行
+                        else:
+                            end_print_row = last_data_row
                     else:
                         end_print_row = ws.max_row
 
-                    # --- 🖨 全列（投資効果予測等）をA4横1ページ幅に収める設定 ---
+                    # --- 🖨 確実にA4横1ページ幅に収める印刷設定 ---
                     max_col_letter = get_column_letter(ws.max_column)
                     ws.print_area = f"A1:{max_col_letter}{end_print_row}"
 
-                    # 1〜8行目をヘッダーとして各ページ上部に固定
+                    # 1〜8行目をタイトル固定
                     ws.print_title_rows = "$1:$8"
 
-                    # 印刷の向き：A4横向き
+                    # 用紙設定：A4・横向き
                     ws.page_setup.orientation = "landscape"
                     ws.page_setup.paperSize = ws.PAPERSIZE_A4
 
-                    # 固定拡大率を解除して「自動フィット」を無効化から復帰
-                    ws.page_setup.scale = None
+                    # 【重要】確実にはみ出さないよう印刷倍率を「55%」に直接設定
+                    ws.page_setup.scale = 55
 
-                    # フィット有効化：横1ページに自動縮小、縦は自動拡張
-                    ws.sheet_properties.pageSetUpPr.fitToPage = True
-                    ws.page_setup.fitToWidth = 1
-                    ws.page_setup.fitToHeight = 0
+                    if ws.sheet_properties.pageSetUpPr:
+                        ws.sheet_properties.pageSetUpPr.fitToPage = False
 
             output = io.BytesIO()
             wb.save(output)
 
-            st.success("🎉 集約処理および横幅A4ピッタリフィット設定が完了しました！")
+            st.success(
+                "🎉 集約処理、不要行削除、およびA4横1ページ全項目収まる印刷設定が完了しました！"
+            )
 
             st.download_button(
                 label="📥 集約版Excelファイルをダウンロード",
