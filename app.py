@@ -1,7 +1,6 @@
 import io
 import os
 import openpyxl
-from openpyxl.worksheet.page import PrintPageSetup
 import pandas as pd
 import streamlit as st
 
@@ -14,10 +13,9 @@ st.set_page_config(
 st.title("📊 設備投資計画フォーム 自動集約ツール")
 st.markdown("""
 各部署から回収した「設備投資計画フォーム（Excel）」をまとめてドラッグ＆ドロップしてください。
-元の「全国まとめフォーマット（計算式やデザイン込み）」に各部署のデータを自動で集約・転記します。
+不要な空ページを出力させず、データ入力行のみを最適化して印刷可能にします。
 """)
 
-# シートを特定するためのキーワードマッピング
 TARGET_SHEET_KEYWORDS = [
     ("新規取得_年初", ["①", "新規取得", "年初"]),
     ("新規取得_追加", ["①", "新規取得", "追加用"]),
@@ -28,7 +26,6 @@ TARGET_SHEET_KEYWORDS = [
 
 
 def find_matching_sheet(sheet_list, keywords):
-    """シート名一覧からキーワードに合致するシート名を検索"""
     for s in sheet_list:
         if all(kw in s for kw in keywords):
             return s
@@ -54,7 +51,6 @@ if uploaded_files:
         combined_rows = {key: [] for key, _ in TARGET_SHEET_KEYWORDS}
         processed_count = 0
 
-        # 各部署ファイルからデータ抽出
         for uploaded_file in uploaded_files:
             filename = uploaded_file.name
             if (
@@ -68,7 +64,9 @@ if uploaded_files:
             try:
                 xl = pd.ExcelFile(uploaded_file)
                 for key, keywords in TARGET_SHEET_KEYWORDS:
-                    matched_sheet = find_matching_sheet(xl.sheet_names, keywords)
+                    matched_sheet = find_matching_sheet(
+                        xl.sheet_names, keywords
+                    )
                     if matched_sheet:
                         df = pd.read_excel(
                             uploaded_file, sheet_name=matched_sheet, header=7
@@ -87,7 +85,6 @@ if uploaded_files:
             except Exception as e:
                 st.error(f"❌ {filename} の読み込みエラー: {e}")
 
-        # テンプレートファイルの選択
         base_file = template_file if template_file else uploaded_files[0]
 
         try:
@@ -97,18 +94,18 @@ if uploaded_files:
                 matched_sheet = find_matching_sheet(wb.sheetnames, keywords)
                 if matched_sheet:
                     ws = wb[matched_sheet]
+                    data_df_list = combined_rows[key]
 
-                    # データを転記
-                    if combined_rows[key]:
+                    if data_df_list:
                         all_data_df = pd.concat(
-                            combined_rows[key], ignore_index=True
+                            data_df_list, ignore_index=True
                         )
+                        num_records = len(all_data_df)
 
-                        # No.を1からの連番にする
                         if "No." in all_data_df.columns:
-                            all_data_df["No."] = range(1, len(all_data_df) + 1)
+                            all_data_df["No."] = range(1, num_records + 1)
 
-                        # 9行目から順にデータを転記
+                        # 9行目から実データを書き込み
                         start_row = 9
                         for r_idx, row in all_data_df.iterrows():
                             current_row = start_row + r_idx
@@ -120,22 +117,51 @@ if uploaded_files:
                                         value=val,
                                     )
 
-                    # --- 🖨 印刷ページ設定の自動補正 ---
-                    # 1〜8行目を印刷タイトル（見出し行）に設定
-                    ws.print_title_rows = "$1:$8"
+                        last_data_row = start_row + num_records - 1
 
-                    # 横幅を1ページに収める設定
-                    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE  # 横向き
-                    ws.page_setup.paperSize = ws.PAPERSIZE_A4  # A4サイズ
+                        # 元の「合計行」の位置を探す
+                        total_row_idx = None
+                        for r in range(start_row, ws.max_row + 1):
+                            if str(ws.cell(row=r, column=2).value).strip() in [
+                                "合計",
+                                "計",
+                            ]:
+                                total_row_idx = r
+                                break
+
+                        # 未入力の空行（データ行と合計行の間）を非表示にして削除扱いにする
+                        if (
+                            total_row_idx
+                            and total_row_idx > last_data_row + 1
+                        ):
+                            for r in range(
+                                last_data_row + 1, total_row_idx
+                            ):
+                                ws.row_dimensions[r].hidden = True
+
+                            end_print_row = total_row_idx
+                        else:
+                            end_print_row = last_data_row
+
+                        # 印刷範囲を有効データ＋合計行までに限定設定
+                        max_col_letter = openpyxl.utils.get_column_letter(
+                            ws.max_column
+                        )
+                        ws.print_area = f"A1:{max_col_letter}{end_print_row}"
+
+                    # ページ・レイアウト設定
+                    ws.print_title_rows = "$1:$8"
+                    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+                    ws.page_setup.paperSize = ws.PAPERSIZE_A4
                     ws.sheet_properties.pageSetUpPr.fitToPage = True
-                    ws.page_setup.fitToWidth = 1  # 横1ページ
-                    ws.page_setup.fitToHeight = 0  # 縦は自動拡張
+                    ws.page_setup.fitToWidth = 1
+                    ws.page_setup.fitToHeight = 0
 
             output = io.BytesIO()
             wb.save(output)
 
             st.success(
-                f"🎉 {processed_count} 個のファイルから集約・転記が完了しました！"
+                f"🎉 {processed_count} 個のファイルから集約・印刷範囲の最適化が完了しました！"
             )
 
             st.download_button(
