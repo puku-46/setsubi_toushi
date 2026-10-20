@@ -14,7 +14,7 @@ st.set_page_config(
 st.title("📊 設備投資計画フォーム 自動集約ツール")
 st.markdown("""
 各部署から回収した「設備投資計画フォーム（Excel）」をまとめてドラッグ＆ドロップしてください。
-右端の「投資効果予測」等の全項目がA4横1ページ幅にピッタリ収まるよう調整して出力します。
+不要な2ページ目以降（空ページやはみ出しページ）を排除し、必要なデータ行のみで1ページに収めて出力します。
 """)
 
 TARGET_SHEET_KEYWORDS = [
@@ -106,7 +106,7 @@ if uploaded_files:
                         if "No." in all_data_df.columns:
                             all_data_df["No."] = range(1, num_records + 1)
 
-                        # 元のテンプレートの合計行の位置を取得
+                        # 元の「合計行」の書式・数式・位置を取得
                         original_total_row = None
                         for r in range(9, ws.max_row + 1):
                             val = str(ws.cell(row=r, column=2).value).strip()
@@ -114,8 +114,8 @@ if uploaded_files:
                                 original_total_row = r
                                 break
 
-                        # 9行目から実データを転記
                         start_row = 9
+                        # 1. 9行目から実データを書き込み
                         for r_idx, row in all_data_df.iterrows():
                             current_row = start_row + r_idx
                             for c_idx, val in enumerate(row):
@@ -127,37 +127,55 @@ if uploaded_files:
                                     )
 
                         last_data_row = start_row + num_records - 1
+                        new_total_row = last_data_row + 1
 
-                        # 実データ行と合計行の間の「不要な空白行」を物理削除
-                        if (
-                            original_total_row
-                            and original_total_row > last_data_row + 1
-                        ):
-                            delete_count = (
-                                original_total_row - (last_data_row + 1)
-                            )
-                            ws.delete_rows(
-                                last_data_row + 1, amount=delete_count
-                            )
-                            end_print_row = last_data_row + 1  # 合計行
+                        # 2. 合計行をデータ直下に詰めて移動＆SUM数式を補正
+                        if original_total_row and original_total_row > new_total_row:
+                            # 合計行のコピー
+                            for c in range(1, ws.max_column + 1):
+                                src_cell = ws.cell(row=original_total_row, column=c)
+                                dst_cell = ws.cell(row=new_total_row, column=c)
+                                if src_cell.value:
+                                    val_str = str(src_cell.value)
+                                    if val_str.startswith("=SUM("):
+                                        col_let = get_column_letter(c)
+                                        dst_cell.value = f"=SUM({col_let}9:{col_let}{last_data_row})"
+                                    else:
+                                        dst_cell.value = src_cell.value
+                                if src_cell.has_style:
+                                    dst_cell.font = src_cell.font.copy()
+                                    dst_cell.border = src_cell.border.copy()
+                                    dst_cell.fill = src_cell.fill.copy()
+                                    dst_cell.alignment = src_cell.alignment.copy()
+                                    dst_cell.number_format = src_cell.number_format
+
+                            # 3. 合計行より下の「不要な未入力行（元々あった行）」を物理削除
+                            delete_start = new_total_row + 1
+                            delete_count = ws.max_row - delete_start + 1
+                            if delete_count > 0:
+                                ws.delete_rows(delete_start, amount=delete_count)
+
+                            end_print_row = new_total_row
                         else:
                             end_print_row = last_data_row
                     else:
                         end_print_row = ws.max_row
 
-                    # --- 🖨 確実にA4横1ページ幅に収める印刷設定 ---
+                    # --- 🖨 1ページ内にピタッと収める印刷設定 ---
                     max_col_letter = get_column_letter(ws.max_column)
+                    
+                    # 印刷エリアを「A1〜最終データ列＆合計行」のみに限定
                     ws.print_area = f"A1:{max_col_letter}{end_print_row}"
 
                     # 1〜8行目をタイトル固定
                     ws.print_title_rows = "$1:$8"
 
-                    # 用紙設定：A4・横向き
+                    # 用紙：A4・横向き
                     ws.page_setup.orientation = "landscape"
                     ws.page_setup.paperSize = ws.PAPERSIZE_A4
 
-                    # 【重要】確実にはみ出さないよう印刷倍率を「55%」に直接設定
-                    ws.page_setup.scale = 55
+                    # 印刷倍率を「52%」に固定（右端の『投資効果予測』列まで1ページ幅にジャスト収める）
+                    ws.page_setup.scale = 52
 
                     if ws.sheet_properties.pageSetUpPr:
                         ws.sheet_properties.pageSetUpPr.fitToPage = False
@@ -166,7 +184,7 @@ if uploaded_files:
             wb.save(output)
 
             st.success(
-                "🎉 集約処理、不要行削除、およびA4横1ページ全項目収まる印刷設定が完了しました！"
+                "🎉 不要ページを削除し、1ページ内に最適化された集約ファイルを作成しました！"
             )
 
             st.download_button(
