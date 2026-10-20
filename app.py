@@ -1,6 +1,7 @@
 import io
 import os
 import openpyxl
+from openpyxl.utils import get_column_letter
 import pandas as pd
 import streamlit as st
 
@@ -13,7 +14,7 @@ st.set_page_config(
 st.title("📊 設備投資計画フォーム 自動集約ツール")
 st.markdown("""
 各部署から回収した「設備投資計画フォーム（Excel）」をまとめてドラッグ＆ドロップしてください。
-不要な空ページを出力させず、データ入力行のみを最適化して印刷可能にします。
+右端の「投資効果予測」などの列も含め、横幅がA4サイズ1ページ内に収まるよう自動調整します。
 """)
 
 TARGET_SHEET_KEYWORDS = [
@@ -96,6 +97,7 @@ if uploaded_files:
                     ws = wb[matched_sheet]
                     data_df_list = combined_rows[key]
 
+                    # 転記処理
                     if data_df_list:
                         all_data_df = pd.concat(
                             data_df_list, ignore_index=True
@@ -105,7 +107,6 @@ if uploaded_files:
                         if "No." in all_data_df.columns:
                             all_data_df["No."] = range(1, num_records + 1)
 
-                        # 9行目から実データを書き込み
                         start_row = 9
                         for r_idx, row in all_data_df.iterrows():
                             current_row = start_row + r_idx
@@ -119,7 +120,7 @@ if uploaded_files:
 
                         last_data_row = start_row + num_records - 1
 
-                        # 元の「合計行」の位置を探す
+                        # 合計行を探す
                         total_row_idx = None
                         for r in range(start_row, ws.max_row + 1):
                             if str(ws.cell(row=r, column=2).value).strip() in [
@@ -129,7 +130,7 @@ if uploaded_files:
                                 total_row_idx = r
                                 break
 
-                        # 未入力の空行（データ行と合計行の間）を非表示にして削除扱いにする
+                        # 未入力の空行を非表示にする
                         if (
                             total_row_idx
                             and total_row_idx > last_data_row + 1
@@ -138,21 +139,26 @@ if uploaded_files:
                                 last_data_row + 1, total_row_idx
                             ):
                                 ws.row_dimensions[r].hidden = True
-
                             end_print_row = total_row_idx
                         else:
-                            end_print_row = last_data_row
+                            end_print_row = (
+                                total_row_idx if total_row_idx else ws.max_row
+                            )
+                    else:
+                        end_print_row = ws.max_row
 
-                        # 印刷範囲を有効データ＋合計行までに限定設定
-                        max_col_letter = openpyxl.utils.get_column_letter(
-                            ws.max_column
-                        )
-                        ws.print_area = f"A1:{max_col_letter}{end_print_row}"
+                    # --- 🖨 全列を横1ページに収める完璧な印刷設定 ---
+                    max_col_letter = get_column_letter(ws.max_column)
+                    ws.print_area = f"A1:{max_col_letter}{end_print_row}"
 
-                    # ページ・レイアウト設定
+                    # タイトル行（1〜8行目固定）
                     ws.print_title_rows = "$1:$8"
+
+                    # ページ設定：A4横向き ＆ 横1ページに適合
                     ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
                     ws.page_setup.paperSize = ws.PAPERSIZE_A4
+
+                    # 拡大縮小を自動調整（横1ページ、縦は自動）
                     ws.sheet_properties.pageSetUpPr.fitToPage = True
                     ws.page_setup.fitToWidth = 1
                     ws.page_setup.fitToHeight = 0
@@ -160,9 +166,7 @@ if uploaded_files:
             output = io.BytesIO()
             wb.save(output)
 
-            st.success(
-                f"🎉 {processed_count} 個のファイルから集約・印刷範囲の最適化が完了しました！"
-            )
+            st.success("🎉 集約処理と横幅自動フィット設定が完了しました！")
 
             st.download_button(
                 label="📥 集約版Excelファイルをダウンロード",
