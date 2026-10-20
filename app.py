@@ -14,7 +14,7 @@ st.set_page_config(
 st.title("📊 設備投資計画フォーム 自動集約ツール")
 st.markdown("""
 各部署から回収した「設備投資計画フォーム（Excel）」をまとめてドラッグ＆ドロップしてください。
-右端の「投資効果予測」などの列も含め、横幅がA4サイズ1ページ内に収まるよう自動調整します。
+右端の「投資効果予測」などの列も含め、横幅がA4サイズ1ページ内に綺麗に収まるよう自動調整します。
 """)
 
 TARGET_SHEET_KEYWORDS = [
@@ -130,7 +130,7 @@ if uploaded_files:
                                 total_row_idx = r
                                 break
 
-                        # 未入力の空行を非表示にする
+                        # 空行を非表示
                         if (
                             total_row_idx
                             and total_row_idx > last_data_row + 1
@@ -147,18 +147,21 @@ if uploaded_files:
                     else:
                         end_print_row = ws.max_row
 
-                    # --- 🖨 全列を横1ページに収める完璧な印刷設定 ---
+                    # --- 🖨 全列（投資効果予測等）をA4横1ページ幅に収める設定 ---
                     max_col_letter = get_column_letter(ws.max_column)
                     ws.print_area = f"A1:{max_col_letter}{end_print_row}"
 
-                    # タイトル行（1〜8行目固定）
+                    # 1〜8行目をヘッダーとして各ページ上部に固定
                     ws.print_title_rows = "$1:$8"
 
-                    # ページ設定：A4横向き ＆ 横1ページに適合
-                    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+                    # 印刷の向き：A4横向き
+                    ws.page_setup.orientation = "landscape"
                     ws.page_setup.paperSize = ws.PAPERSIZE_A4
 
-                    # 拡大縮小を自動調整（横1ページ、縦は自動）
+                    # 固定拡大率を解除して「自動フィット」を無効化から復帰
+                    ws.page_setup.scale = None
+
+                    # フィット有効化：横1ページに自動縮小、縦は自動拡張
                     ws.sheet_properties.pageSetUpPr.fitToPage = True
                     ws.page_setup.fitToWidth = 1
                     ws.page_setup.fitToHeight = 0
@@ -166,7 +169,7 @@ if uploaded_files:
             output = io.BytesIO()
             wb.save(output)
 
-            st.success("🎉 集約処理と横幅自動フィット設定が完了しました！")
+            st.success("🎉 集約処理および横幅A4ピッタリフィット設定が完了しました！")
 
             st.download_button(
                 label="📥 集約版Excelファイルをダウンロード",
