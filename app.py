@@ -1,13 +1,14 @@
 import io
 import os
 import openpyxl
+from openpyxl.worksheet.page import PrintPageSetup
 import pandas as pd
 import streamlit as st
 
 st.set_page_config(
     page_title="設備投資計画フォーム 自動集約ツール",
     page_icon="📊",
-    layout="wide"
+    layout="wide",
 )
 
 st.title("📊 設備投資計画フォーム 自動集約ツール")
@@ -37,13 +38,13 @@ def find_matching_sheet(sheet_list, keywords):
 st.sidebar.header("📂 テンプレート設定")
 template_file = st.sidebar.file_uploader(
     "【任意】まとめ用テンプレート（0000年度/全国まとめフォーム）",
-    type=["xlsx"]
+    type=["xlsx"],
 )
 
 uploaded_files = st.file_uploader(
     "各部署のExcelファイルをここにドラッグ＆ドロップ（複数可）",
     type=["xlsx"],
-    accept_multiple_files=True
+    accept_multiple_files=True,
 )
 
 if uploaded_files:
@@ -56,7 +57,12 @@ if uploaded_files:
         # 各部署ファイルからデータ抽出
         for uploaded_file in uploaded_files:
             filename = uploaded_file.name
-            if "★" in filename or "全国" in filename or "集約" in filename or "0000年度" in filename:
+            if (
+                "★" in filename
+                or "全国" in filename
+                or "集約" in filename
+                or "0000年度" in filename
+            ):
                 continue
 
             try:
@@ -64,11 +70,15 @@ if uploaded_files:
                 for key, keywords in TARGET_SHEET_KEYWORDS:
                     matched_sheet = find_matching_sheet(xl.sheet_names, keywords)
                     if matched_sheet:
-                        df = pd.read_excel(uploaded_file, sheet_name=matched_sheet, header=7)
+                        df = pd.read_excel(
+                            uploaded_file, sheet_name=matched_sheet, header=7
+                        )
                         if "資産名称" in df.columns:
                             df_valid = df.dropna(subset=["資産名称"]).copy()
                             if "No." in df_valid.columns:
-                                df_valid = df_valid[df_valid["No."].astype(str) != "合計"]
+                                df_valid = df_valid[
+                                    df_valid["No."].astype(str) != "合計"
+                                ]
 
                             if not df_valid.empty:
                                 combined_rows[key].append(df_valid)
@@ -85,34 +95,55 @@ if uploaded_files:
 
             for key, keywords in TARGET_SHEET_KEYWORDS:
                 matched_sheet = find_matching_sheet(wb.sheetnames, keywords)
-                if matched_sheet and combined_rows[key]:
+                if matched_sheet:
                     ws = wb[matched_sheet]
 
-                    all_data_df = pd.concat(combined_rows[key], ignore_index=True)
+                    # データを転記
+                    if combined_rows[key]:
+                        all_data_df = pd.concat(
+                            combined_rows[key], ignore_index=True
+                        )
 
-                    # No.を1からの連番にする
-                    if "No." in all_data_df.columns:
-                        all_data_df["No."] = range(1, len(all_data_df) + 1)
+                        # No.を1からの連番にする
+                        if "No." in all_data_df.columns:
+                            all_data_df["No."] = range(1, len(all_data_df) + 1)
 
-                    # 9行目から順にデータを転記
-                    start_row = 9
-                    for r_idx, row in all_data_df.iterrows():
-                        current_row = start_row + r_idx
-                        for c_idx, val in enumerate(row):
-                            if pd.notna(val):
-                                ws.cell(row=current_row, column=c_idx + 1, value=val)
+                        # 9行目から順にデータを転記
+                        start_row = 9
+                        for r_idx, row in all_data_df.iterrows():
+                            current_row = start_row + r_idx
+                            for c_idx, val in enumerate(row):
+                                if pd.notna(val):
+                                    ws.cell(
+                                        row=current_row,
+                                        column=c_idx + 1,
+                                        value=val,
+                                    )
+
+                    # --- 🖨 印刷ページ設定の自動補正 ---
+                    # 1〜8行目を印刷タイトル（見出し行）に設定
+                    ws.print_title_rows = "$1:$8"
+
+                    # 横幅を1ページに収める設定
+                    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE  # 横向き
+                    ws.page_setup.paperSize = ws.PAPERSIZE_A4  # A4サイズ
+                    ws.sheet_properties.pageSetUpPr.fitToPage = True
+                    ws.page_setup.fitToWidth = 1  # 横1ページ
+                    ws.page_setup.fitToHeight = 0  # 縦は自動拡張
 
             output = io.BytesIO()
             wb.save(output)
 
-            st.success(f"🎉 {processed_count} 個のファイルから集約・転記が完了しました！")
+            st.success(
+                f"🎉 {processed_count} 個のファイルから集約・転記が完了しました！"
+            )
 
             st.download_button(
                 label="📥 集約版Excelファイルをダウンロード",
                 data=output.getvalue(),
                 file_name="★【全国】設備投資計画集約版.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                type="primary"
+                type="primary",
             )
 
         except Exception as e:
