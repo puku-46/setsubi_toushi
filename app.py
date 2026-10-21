@@ -233,3 +233,5 @@ if st.session_state.combined_rows_A:
                             if df_filtered.empty:
                                 for col in df.columns:
                                     if df[col].astype(str).str.strip().isin(selected_names).any():
+                                        #
+                                        pass
