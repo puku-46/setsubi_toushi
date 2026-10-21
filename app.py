@@ -14,7 +14,7 @@ st.set_page_config(
 st.title("📊 設備投資計画フォーム 自動集約ツール")
 st.markdown("""
 各部署から回収した「設備投資計画フォーム（Excel）」をまとめてドラッグ＆ドロップしてください。
-各シートが必ず1ページ以内に収まるよう印刷設定を最適化し、未入力のシートを自動削除して出力します。
+ヘッダーの「単位」表記等を保持しつつ、各シートが1ページ以内に収まるよう印刷設定を最適化して出力します。
 """)
 
 TARGET_SHEET_KEYWORDS = [
@@ -95,6 +95,12 @@ if uploaded_files:
                 matched_sheet = find_matching_sheet(wb.sheetnames, keywords)
                 if matched_sheet:
                     ws = wb[matched_sheet]
+                    
+                    # --- 🏷 2行目の「単位： 千円」等の表記を自動補正 ---
+                    if str(ws.cell(row=2, column=3).value).strip() in ["単位：", "単位"]:
+                        if not ws.cell(row=2, column=4).value:
+                            ws.cell(row=2, column=4, value="千円")
+
                     data_df_list = combined_rows[key]
 
                     if data_df_list:
@@ -115,7 +121,7 @@ if uploaded_files:
                                 break
 
                         start_row = 9
-                        # 実データ書き込み
+                        # 実データ書き込み（ヘッダー部分1〜8行目は一切上書きせず保護）
                         for r_idx, row in all_data_df.iterrows():
                             current_row = start_row + r_idx
                             for c_idx, val in enumerate(row):
@@ -163,33 +169,22 @@ if uploaded_files:
                     # --- 🖨 1ページ（1ページに収める）印刷設定の完全適用 ---
                     max_col_letter = get_column_letter(ws.max_column)
                     ws.print_area = f"A1:{max_col_letter}{end_print_row}"
-
-                    # 1〜8行目を各ページのタイトル行として固定
                     ws.print_title_rows = "$1:$8"
-
-                    # 印刷の向き：A4横向き
                     ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
                     ws.page_setup.paperSize = ws.PAPERSIZE_A4
 
-                    # 固定倍率を無効化し、1ページ収め機能を強制有効化
                     ws.page_setup.scale = None
                     if ws.sheet_properties.pageSetUpPr is None:
                         ws.sheet_properties.pageSetUpPr = openpyxl.worksheet.properties.PageSetupProperties()
                     
                     ws.sheet_properties.pageSetUpPr.fitToPage = True
                     ws.page_setup.fitToWidth = 1
-                    ws.page_setup.fitToHeight = 1  # 縦も横も「1ページ」に強制収縮
+                    ws.page_setup.fitToHeight = 1
 
-            # --- 🧹 中身（データ）が入っていないシートの自動削除処理 ---
+            # --- 🧹 中身（データ）が入っていない不要シートの自動削除処理 ---
             sheets_to_remove = []
             for sheetname in wb.sheetnames:
                 ws = wb[sheetname]
-                # 「①年初」や「②年初」、マスター・説明用シートなどは保護対象にする場合を除き、
-                # 資産データ行（9行目以降の「No.」や「資産名称」）が空のシートを判定して削除します
-                # ※ここでは「①年初」「②年初」「該当なし」「種類」「償却率」以外のデータ行空シートを対象にする例、
-                # または全シート共通で9行目以降に有効な資産データがない追加用シート等を自動判定します。
-                
-                # 追加用や未入力のシートかを判定（例: 行9以降にデータがないシートを削除対象に）
                 if sheetname not in ["償却率", "種類", "➃該当なし"]:
                     has_asset_data = False
                     for r in range(9, ws.max_row + 1):
@@ -199,11 +194,10 @@ if uploaded_files:
                             has_asset_data = True
                             break
                     
-                    # 年初シート以外でデータが一件もない、または追加用シートの場合は削除リストへ
                     if not has_asset_data and ("追加" in sheetname or "年間減価償却費" in sheetname or "償却月数" in sheetname):
                         sheets_to_remove.append(sheetname)
 
-            for s_name in sheets_to_range if 'sheets_to_range' in locals() else sheets_to_remove:
+            for s_name in sheets_to_remove:
                 if s_name in wb.sheetnames:
                     wb.remove(wb[s_name])
 
@@ -211,7 +205,7 @@ if uploaded_files:
             wb.save(output)
 
             st.success(
-                "🎉 不要な未入力シートの削除および1ページ最適化された集約ファイルの作成が完了しました！"
+                "🎉 「単位」表記を維持し、1ページ最適化された集約ファイルの作成が完了しました！"
             )
 
             st.download_button(
