@@ -165,7 +165,6 @@ if uploaded_files:
                 for key, keywords in TARGET_SHEET_KEYWORDS:
                     matched_sheet = find_matching_sheet(xl.sheet_names, keywords)
                     if matched_sheet:
-                        # 全体用データを普通に読み込み
                         df = pd.read_excel(uploaded_file, sheet_name=matched_sheet, header=7)
                         
                         if "No." in df.columns:
@@ -223,14 +222,14 @@ if st.session_state.combined_rows_A:
             if selected_names:
                 combined_rows_B = {key: [] for key, _ in TARGET_SHEET_KEYWORDS}
                 
-                # 各シートのデータから選択された名称を抽出するロジックを強化
+                # 各シートのデータから選択された名称を抽出
                 for key, dfs in st.session_state.combined_rows_A.items():
                     for df in dfs:
-                        # 列のズレに左右されないよう、dfの各行に対して元のExcel上のC列に相当するデータを厳密にチェック
-                        # 読み込んだdfの列数が元のシート構造を反映しているため、データの3列目を安全に走査
                         if len(df.columns) >= 3:
-                            # 確実に選択された名前（通関課など）と一致する行を抽出
+                            # 3列目を対象に判定
                             df_filtered = df[df.iloc[:, 2].astype(str).str.strip().isin(selected_names)].copy()
                             
-                            # 万が一ズレていた場合のセーフティ：列名に「資産名称」や特定のキーワードが含まれている列を探して再判定
+                            # 万が一ズレていた場合のバックアップスキャン
                             if df_filtered.empty:
+                                for col in df.columns:
+                                    if df[col].astype(str).str.strip().isin(selected_names).any():
