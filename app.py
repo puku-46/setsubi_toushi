@@ -40,11 +40,14 @@ if uploaded_files:
             try:
                 output_buffer = io.BytesIO()
                 
-                # アップロードされたファイルを読み込んで処理
+                # アップロードされた最初のファイルを読み込んで処理
+                # (※複数ファイルの結合や集約ロジックがすでにある場合は、そこに以下のクレンジング処理を適用します)
                 wb = openpyxl.load_workbook(uploaded_files[0])
+                
                 for sheet_name in wb.sheetnames:
                     ws = wb[sheet_name]
-                    # 印刷時のページ番号（フッター）を完全にクリアする処理
+                    
+                    # 1. 印刷設定：ページ番号（フッター）を完全にクリアする処理
                     ws.oddFooter.left.text = ""
                     ws.oddFooter.center.text = ""
                     ws.oddFooter.right.text = ""
@@ -89,17 +92,17 @@ if st.session_state.get("集約完了", False):
             default=["宮城東洋", "通関課"]
         )
 
-# --- データフレーム処理時の「No.の詰め直し」と「空行削除」用の参考関数 ---
+# --- pandas使用時のデータ整理用関数（必要に応じて集約ロジック内で呼び出してください） ---
 def clean_and_reindex_df(df):
     """
-    資産名称などが空欄の行を除外して、No.を1から順番に振り直す関数
+    資産名称などが空欄の行を除外して、No.を1から順番に詰め直す関数
     """
     if "資産名称" in df.columns:
         # 資産名称が空欄（NaNや空白文字）の行を削除
         df = df.dropna(subset=["資産名称"])
         df = df[df["資産名称"].astype(str).str.strip() != ""]
     
-    # No. 列が存在する場合は上から1, 2, 3... と振り直す
+    # No. 列が存在する場合は上から1, 2, 3... と綺麗に振り直す
     if "No." in df.columns:
         df["No."] = range(1, len(df) + 1)
         
