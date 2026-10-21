@@ -14,7 +14,7 @@ st.set_page_config(
 st.title("📊 設備投資計画フォーム 自動集約ツール")
 st.markdown("""
 各部署から回収した「設備投資計画フォーム（Excel）」をまとめてドラッグ＆ドロップしてください。
-各シートが必ず1ページ以内に収まるよう印刷設定を最適化して出力します。
+各シートが必ず1ページ以内に収まるよう印刷設定を最適化し、未入力のシートを自動削除して出力します。
 """)
 
 TARGET_SHEET_KEYWORDS = [
@@ -180,11 +180,38 @@ if uploaded_files:
                     ws.page_setup.fitToWidth = 1
                     ws.page_setup.fitToHeight = 1  # 縦も横も「1ページ」に強制収縮
 
+            # --- 🧹 中身（データ）が入っていないシートの自動削除処理 ---
+            sheets_to_remove = []
+            for sheetname in wb.sheetnames:
+                ws = wb[sheetname]
+                # 「①年初」や「②年初」、マスター・説明用シートなどは保護対象にする場合を除き、
+                # 資産データ行（9行目以降の「No.」や「資産名称」）が空のシートを判定して削除します
+                # ※ここでは「①年初」「②年初」「該当なし」「種類」「償却率」以外のデータ行空シートを対象にする例、
+                # または全シート共通で9行目以降に有効な資産データがない追加用シート等を自動判定します。
+                
+                # 追加用や未入力のシートかを判定（例: 行9以降にデータがないシートを削除対象に）
+                if sheetname not in ["償却率", "種類", "➃該当なし"]:
+                    has_asset_data = False
+                    for r in range(9, ws.max_row + 1):
+                        val_no = str(ws.cell(row=r, column=2).value).strip()
+                        val_name = str(ws.cell(row=r, column=5).value).strip()
+                        if val_no and val_no not in ["None", "nan", "合計", "計", "No."] and val_name and val_name not in ["None", "nan"]:
+                            has_asset_data = True
+                            break
+                    
+                    # 年初シート以外でデータが一件もない、または追加用シートの場合は削除リストへ
+                    if not has_asset_data and ("追加" in sheetname or "年間減価償却費" in sheetname or "償却月数" in sheetname):
+                        sheets_to_remove.append(sheetname)
+
+            for s_name in sheets_to_range if 'sheets_to_range' in locals() else sheets_to_remove:
+                if s_name in wb.sheetnames:
+                    wb.remove(wb[s_name])
+
             output = io.BytesIO()
             wb.save(output)
 
             st.success(
-                "🎉 1ページに収まる最適化された集約ファイルの作成が完了しました！"
+                "🎉 不要な未入力シートの削除および1ページ最適化された集約ファイルの作成が完了しました！"
             )
 
             st.download_button(
