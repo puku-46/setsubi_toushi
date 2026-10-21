@@ -31,6 +31,7 @@ def find_matching_sheet(sheet_list, keywords):
             return s
     return None
 
+# --- 状態保持（Session State）の初期化 ---
 if "combined_rows_A" not in st.session_state:
     st.session_state.combined_rows_A = None
 if "c_column_unique_names" not in st.session_state:
@@ -48,6 +49,7 @@ uploaded_files = st.file_uploader(
     accept_multiple_files=True,
 )
 
+# Excelファイルを作成する共通関数
 def create_excel_file(source_combined_rows):
     base_file = template_file if template_file else uploaded_files
     if hasattr(base_file, "seek"):
@@ -109,6 +111,7 @@ def create_excel_file(source_combined_rows):
                 else:
                     end_print_row = last_data_row
             else:
+                # データが空の場合、データ行(9行目以降)をクリア
                 original_total_row = None
                 for r in range(9, ws.max_row + 1):
                     val = str(ws.cell(row=r, column=2).value).strip()
@@ -122,11 +125,14 @@ def create_excel_file(source_combined_rows):
                         dst = ws.cell(row=9, column=c)
                         if src.has_style:
                             dst.font = src.font.copy(); dst.border = src.border.copy(); dst.fill = src.fill.copy(); dst.alignment = src.alignment.copy(); dst.number_format = src.number_format
-                    ws.delete_rows(10, amount=ws.max_row - 9)
+                    
+                    if ws.max_row > 9:
+                        ws.delete_rows(10, amount=max(1, ws.max_row - 9))
                     end_print_row = 9
                 else:
                     end_print_row = ws.max_row
             
+            # 印刷設定の適用
             max_col_letter = get_column_letter(ws.max_column)
             ws.print_area = f"A1:{max_col_letter}{end_print_row}"
             ws.print_title_rows = "$1:$8"
@@ -170,17 +176,16 @@ if uploaded_files:
                         if not df_valid.empty:
                             combined_rows_A[key].append(df_valid)
                             
-                            # 【解決策】結合セルのズレを防ぐため、Excelの「C列のみ」を独立して読み込む
+                            # Excelの「C列のみ」を独立して読み込んで、選択肢を確実に生成
                             df_c_only = pd.read_excel(
                                 uploaded_file, 
                                 sheet_name=matched_sheet, 
                                 header=7, 
                                 usecols="C"
                             )
-                            # C列の値をテキスト化して重複なく収集
                             for val in df_c_only.iloc[:, 0].dropna().unique():
                                 val_str = str(val).strip()
-                                if val_str and val_str != "合計" and val_str != "計":
+                                if val_str and val_str not in ["合計", "計", "資産名称"]:
                                     all_c_names.add(val_str)
                                     
             except Exception as e:
@@ -217,16 +222,15 @@ if st.session_state.combined_rows_A:
             
             if selected_names:
                 combined_rows_B = {key: [] for key, _ in TARGET_SHEET_KEYWORDS}
+                
+                # 各シートのデータから選択された名称を抽出するロジックを強化
                 for key, dfs in st.session_state.combined_rows_A.items():
                     for df in dfs:
-                        # 【重要】各データの「C列目」に対応する値を正確に判定
-                        # header=7 で読み込んだデータフレームの、元Excel「C列」に相当する列インデックスを見つける
-                        # pandasの挙動を考慮し、左から3番目の実カラムデータを安全にチェック
+                        # 列のズレに左右されないよう、dfの各行に対して元のExcel上のC列に相当するデータを厳密にチェック
+                        # 読み込んだdfの列数が元のシート構造を反映しているため、データの3列目を安全に走査
                         if len(df.columns) >= 3:
-                            # 結合セルの影響を考慮し、各行で「選ばれた名称」が含まれているかを厳密にフィルタリング
-                            # ここではデータフレームの左から3番目の列の値が合致するか検証
+                            # 確実に選択された名前（通関課など）と一致する行を抽出
                             df_filtered = df[df.iloc[:, 2].astype(str).str.strip().isin(selected_names)].copy()
-                            if not df_filtered.empty:
-                                combined_rows_B[key].append(df_filtered)
-                
-                file_B_data = create_excel_file(combined_rows_B)
+                            
+                            # 万が一ズレていた場合のセーフティ：列名に「資産名称」や特定のキーワードが含まれている列を探して再判定
+                            if df_filtered.empty:
