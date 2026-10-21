@@ -14,7 +14,7 @@ st.set_page_config(
 st.title("📊 設備投資計画フォーム 自動集約＆施設抽出ツール")
 st.markdown("""
 各部署から回収した「設備投資計画フォーム（Excel）」をまとめて集約します。  
-集約後、**画面上のプルダウンから施設（部署）を複数選択**して、冷蔵部などの別ファイルとしてまとめて出力できます。
+画面上のプルダウンから施設（部署）を複数選択して、全国版と冷蔵部版のファイルをいつでも両方ダウンロードできます。
 """)
 
 TARGET_SHEET_KEYWORDS = [
@@ -48,7 +48,7 @@ uploaded_files = st.file_uploader(
 if uploaded_files:
     st.info(f"📁 現在 {len(uploaded_files)} 個のファイルが選択されています。")
 
-    if st.button("⚡ 集計処理を実行する", type="primary"):
+    if st.button("⚡ データを集約する", type="primary"):
         combined_rows = {key: [] for key, _ in TARGET_SHEET_KEYWORDS}
         processed_count = 0
 
@@ -86,21 +86,21 @@ if uploaded_files:
             except Exception as e:
                 st.error(f"❌ {filename} の読み込みエラー: {e}")
 
-        # 集約結果をセッション状態に保存（画面再描画時にも保持するため）
         st.session_state["combined_rows"] = combined_rows
-        st.session_state["processed_files_count"] = processed_count
         st.session_state["has_aggregated"] = True
+        # 新規集約時は古いダウンロード用データをクリア
+        st.session_state.pop("output_nat_bytes", None)
+        st.session_state.pop("output_dep_bytes", None)
+        st.success("🎉 全部署のデータ集約が完了しました！下に施設の選択が表示されます。")
 
 # --- 集計完了後のUI表示 ---
 if st.session_state.get("has_aggregated", False):
     combined_rows = st.session_state["combined_rows"]
-    st.success("🎉 全部署のデータ集約が完了しました！")
 
     # 全データの中から C列（施設名・部署名）のユニークなリストを取得
     all_facilities = set()
     for key, df_list in combined_rows.items():
         for df in df_list:
-            # 2番目の列（C列：部署、工場、冷蔵庫等）を取得
             dept_col = None
             for col in df.columns:
                 if (
@@ -126,16 +126,13 @@ if st.session_state.get("has_aggregated", False):
 
     sorted_facilities = sorted(list(all_facilities))
 
+    st.divider()
     st.subheader("🏢 別ファイル（冷蔵部等）作成用の施設選択")
-    st.markdown(
-        "集約されたデータの中から、別ファイルに含めたい施設を選択してください。"
-    )
 
-    # 「冷蔵」が含まれるものをデフォルト選択肢として設定
     default_selected = [f for f in sorted_facilities if "冷蔵" in f]
 
     dept_file_label = st.text_input(
-        "出力ファイル名（部署名）",
+        "抽出ファイル名（部署名）",
         value="冷蔵部",
         help="例：「冷蔵部」と入力すると『★【冷蔵部】設備投資計画集約版.xlsx』が出力されます。",
     )
@@ -146,15 +143,12 @@ if st.session_state.get("has_aggregated", False):
         default=default_selected,
     )
 
-    if st.button("📄 選択した施設でExcelファイルを生成する", type="secondary"):
+    if st.button("📄 両方のExcelファイルを一括生成する", type="primary"):
         base_file = template_file if template_file else uploaded_files[0]
 
         try:
-            # --- 1. 全国版のブック作成 ---
             base_file.seek(0)
             wb_national = openpyxl.load_workbook(base_file)
-
-            # --- 2. 選択部署（冷蔵部）版のブック作成 ---
             base_file.seek(0)
             wb_dept = openpyxl.load_workbook(base_file)
 
@@ -212,7 +206,6 @@ if st.session_state.get("has_aggregated", False):
                     else:
                         end_print_row_nat = 8
 
-                    # 印刷設定（全国）
                     max_col_letter = get_column_letter(ws_nat.max_column)
                     ws_nat.print_area = (
                         f"A1:{max_col_letter}{end_print_row_nat}"
@@ -265,7 +258,6 @@ if st.session_state.get("has_aggregated", False):
                             dept_col_name = all_data_df.columns[1]
 
                         if dept_col_name and selected_facilities:
-                            # 選択された施設リストに合致する行だけを抽出
                             dept_df = all_data_df[
                                 all_data_df[dept_col_name]
                                 .astype(str)
@@ -313,7 +305,6 @@ if st.session_state.get("has_aggregated", False):
                     else:
                         end_print_row_dept = 8
 
-                    # 印刷設定（選択部署）
                     ws_dep.print_area = (
                         f"A1:{max_col_letter}{end_print_row_dept}"
                     )
@@ -331,7 +322,7 @@ if st.session_state.get("has_aggregated", False):
                     ws_dep.page_setup.fitToWidth = 1
                     ws_dep.page_setup.fitToHeight = 1
 
-            # --- 不要シート削除（全国版） ---
+            # --- 不要シート削除 ---
             sheets_to_remove_nat = [
                 s
                 for s in wb_national.sheetnames
@@ -346,7 +337,6 @@ if st.session_state.get("has_aggregated", False):
             for s_name in sheets_to_remove_nat:
                 wb_national.remove(wb_national[s_name])
 
-            # --- 不要シート削除（選択部署版） ---
             sheets_to_remove_dep = [
                 s
                 for s in wb_dept.sheetnames
@@ -361,33 +351,41 @@ if st.session_state.get("has_aggregated", False):
             for s_name in sheets_to_remove_dep:
                 wb_dept.remove(wb_dept[s_name])
 
-            # ダウンロードバイナリの作成
+            # セッションにバイナリデータを保存
             output_nat = io.BytesIO()
             wb_national.save(output_nat)
+            st.session_state["output_nat_bytes"] = output_nat.getvalue()
 
             output_dep = io.BytesIO()
             wb_dept.save(output_dep)
+            st.session_state["output_dep_bytes"] = output_dep.getvalue()
+            st.session_state["dept_file_label"] = dept_file_label
 
-            st.divider()
-            st.success("🎉 ファイルの生成が完了しました！")
-
-            col1, col2 = st.columns(2)
-            with col1:
-                st.download_button(
-                    label="📥 【全国版】集約ファイルをダウンロード",
-                    data=output_nat.getvalue(),
-                    file_name="★【全国】設備投資計画集約版.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="primary",
-                )
-            with col2:
-                st.download_button(
-                    label=f"📥 【{dept_file_label}版】抽出ファイルをダウンロード",
-                    data=output_dep.getvalue(),
-                    file_name=f"★【{dept_file_label}】設備投資計画集約版.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="primary",
-                )
+            st.success("🎉 両方のファイルが正常に生成されました！いつでもダウンロード可能です。")
 
         except Exception as e:
             st.error(f"ファイル生成中にエラーが発生しました: {e}")
+
+    # セッションにデータが存在していれば、ダウンロードボタンを常時表示（何度でも押せます）
+    if "output_nat_bytes" in st.session_state and "output_dep_bytes" in st.session_state:
+        st.divider()
+        st.markdown("### 📥 ダウンロードセンター")
+        label_name = st.session_state.get("dept_file_label", "冷蔵部")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                label="📥 【全国版】集約ファイルをダウンロード",
+                data=st.session_state["output_nat_bytes"],
+                file_name="★【全国】設備投資計画集約版.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_nat",
+            )
+        with col2:
+            st.download_button(
+                label=f"📥 【{label_name}版】抽出ファイルをダウンロード",
+                data=st.session_state["output_dep_bytes"],
+                file_name=f"★【{label_name}】設備投資計画集約版.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_dep",
+            )
