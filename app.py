@@ -1,7 +1,7 @@
 import io
 import os
-import shutil
 import openpyxl
+from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.utils import get_column_letter
 import pandas as pd
 import streamlit as st
@@ -15,7 +15,7 @@ st.set_page_config(
 st.title("📊 設備投資計画フォーム 自動集約ツール")
 st.markdown("""
 各部署から回収した「設備投資計画フォーム（Excel）」をまとめてドラッグ＆ドロップしてください。
-テンプレートのプルダウン・説明文・書式を完全維持しつつ、各シートが1ページ以内に収まるよう印刷設定を最適化して出力します。
+D2セルの「千円」表記やプルダウン、説明文を完全に維持しつつ、各シートが1ページ以内に収まるよう印刷設定を最適化して出力します。
 """)
 
 TARGET_SHEET_KEYWORDS = [
@@ -90,8 +90,6 @@ if uploaded_files:
         base_file = template_file if template_file else uploaded_files[0]
 
         try:
-            # テンプレート（または最初のファイル）のバイトデータをそのまま読み込んでオープン
-            # （これにより、プルダウンやコメント、背景色などのオブジェクト構造を完全に保持します）
             base_file.seek(0)
             wb = openpyxl.load_workbook(base_file)
 
@@ -99,17 +97,23 @@ if uploaded_files:
                 matched_sheet = find_matching_sheet(wb.sheetnames, keywords)
                 if matched_sheet:
                     ws = wb[matched_sheet]
+                    
+                    # --- 🏷 D2セル（単位）の「千円」とプルダウン・コメントを確実に復元・設定 ---
+                    if not ws.cell(row=2, column=4).value:
+                        ws.cell(row=2, column=4, value="千円")
+                    
+                    # D2セルに通貨選択のプルダウン（入力規則）を確実に付与
+                    dv_d2 = DataValidation(type="list", formula1='"千円,ドル,元,ルピー"', allow_blank=True)
+                    ws.add_data_validation(dv_d2)
+                    dv_d2.add("D2")
+
                     data_df_list = combined_rows[key]
 
-                    # 既存の実データ領域（9行目〜合計行の前まで）を一度クリアする（数式や値のみ、書式やプルダウンは触らない）
-                    # ここでは安全のため9行目以降の値をクリアして新しく埋め込みます
+                    # 9行目以降の既存データをクリア
                     max_r = ws.max_row
                     for r in range(9, max_r + 1):
-                        # 合計行やそれ以降も含めて、9行目から下のセル値をクリア
                         for c in range(1, ws.max_column + 1):
-                            cell = ws.cell(row=r, column=c)
-                            # 数式や値だけクリア（プルダウンやスタイルは保持される）
-                            cell.value = None
+                            ws.cell(row=r, column=c).value = None
 
                     if data_df_list:
                         all_data_df = pd.concat(
@@ -135,20 +139,17 @@ if uploaded_files:
                         last_data_row = start_row + num_records - 1
                         new_total_row = last_data_row + 1
 
-                        # 合計行の再配置とSUM数式設定
-                        # 元のテンプレートの合計行（もし下部にあれば）のスタイルを新しい合計行にコピーする
+                        # 合計行の設定
                         ws.cell(row=new_total_row, column=2, value="合計")
                         for c in range(1, ws.max_column + 1):
                             dst_cell = ws.cell(row=new_total_row, column=c)
                             col_let = get_column_letter(c)
-                            # 金額や数値が入る列（例としてSUMが必要そうな列）に数式を設定、あるいは一般的な集計列に適用
-                            # ここでは安全に数値列に対してSUMを設定
-                            if c >= 10:  # 支払額や取得価額などの列
+                            if c >= 10:  # 金額・数値列にSUM数式を設定
                                 dst_cell.value = f"=SUM({col_let}9:{col_let}{last_data_row})"
 
                         end_print_row = new_total_row
                     else:
-                        end_print_row = 8  # データがない場合はヘッダーのみ
+                        end_print_row = 8
 
                     # --- 🖨 1ページ（1ページに収める）印刷設定の完全適用 ---
                     max_col_letter = get_column_letter(ws.max_column)
@@ -189,7 +190,7 @@ if uploaded_files:
             wb.save(output)
 
             st.success(
-                "🎉 プルダウン・単位・説明文を完全維持し、1ページ最適化された集約ファイルの作成が完了しました！"
+                "🎉 「千円」表記とプルダウン・説明文を完全復元し、1ページ最適化された集約ファイルの作成が完了しました！"
             )
 
             st.download_button(
