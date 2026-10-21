@@ -14,7 +14,7 @@ st.set_page_config(
 st.title("📊 設備投資計画フォーム 自動集約ツール")
 st.markdown("""
 各部署から回収した「設備投資計画フォーム（Excel）」をまとめてドラッグ＆ドロップしてください。
-ヘッダーの「単位」表記等を保持しつつ、各シートが1ページ以内に収まるよう印刷設定を最適化して出力します。
+D2セルのプルダウンや説明文、ヘッダーの書式を完全維持しつつ、各シートが1ページ以内に収まるよう印刷設定を最適化して出力します。
 """)
 
 TARGET_SHEET_KEYWORDS = [
@@ -96,10 +96,8 @@ if uploaded_files:
                 if matched_sheet:
                     ws = wb[matched_sheet]
                     
-                    # --- 🏷 2行目の「単位： 千円」等の表記を自動補正 ---
-                    if str(ws.cell(row=2, column=3).value).strip() in ["単位：", "単位"]:
-                        if not ws.cell(row=2, column=4).value:
-                            ws.cell(row=2, column=4, value="千円")
+                    # --- 🏷 D2セル（単位）のプルダウン・説明文は一切変更せずベースのものを完全に保持 ---
+                    # ※ ここでD2セルに値を上書きせず、テンプレート側の設定・値をそのまま活かします。
 
                     data_df_list = combined_rows[key]
 
@@ -121,7 +119,7 @@ if uploaded_files:
                                 break
 
                         start_row = 9
-                        # 実データ書き込み（ヘッダー部分1〜8行目は一切上書きせず保護）
+                        # 実データ書き込み（1〜8行目のヘッダー・プルダウン・コメント領域は完全に保護）
                         for r_idx, row in all_data_df.iterrows():
                             current_row = start_row + r_idx
                             for c_idx, val in enumerate(row):
@@ -205,7 +203,7 @@ if uploaded_files:
             wb.save(output)
 
             st.success(
-                "🎉 「単位」表記を維持し、1ページ最適化された集約ファイルの作成が完了しました！"
+                "🎉 プルダウン・説明文を完全維持し、1ページ最適化された集約ファイルの作成が完了しました！"
             )
 
             st.download_button(
