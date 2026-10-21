@@ -31,7 +31,6 @@ def find_matching_sheet(sheet_list, keywords):
             return s
     return None
 
-# --- 状態保持（Session State）の初期化 ---
 if "combined_rows_A" not in st.session_state:
     st.session_state.combined_rows_A = None
 if "c_column_unique_names" not in st.session_state:
@@ -49,7 +48,6 @@ uploaded_files = st.file_uploader(
     accept_multiple_files=True,
 )
 
-# Excel作成共通処理（openpyxl）
 def create_excel_file(source_combined_rows):
     base_file = template_file if template_file else uploaded_files
     if hasattr(base_file, "seek"):
@@ -111,7 +109,6 @@ def create_excel_file(source_combined_rows):
                 else:
                     end_print_row = last_data_row
             else:
-                # データが空の場合、データ行(9行目以降)をクリア
                 original_total_row = None
                 for r in range(9, ws.max_row + 1):
                     val = str(ws.cell(row=r, column=2).value).strip()
@@ -130,7 +127,6 @@ def create_excel_file(source_combined_rows):
                 else:
                     end_print_row = ws.max_row
             
-            # 印刷設定
             max_col_letter = get_column_letter(ws.max_column)
             ws.print_area = f"A1:{max_col_letter}{end_print_row}"
             ws.print_title_rows = "$1:$8"
@@ -163,24 +159,36 @@ if uploaded_files:
                 for key, keywords in TARGET_SHEET_KEYWORDS:
                     matched_sheet = find_matching_sheet(xl.sheet_names, keywords)
                     if matched_sheet:
+                        # 全体用データを普通に読み込み
                         df = pd.read_excel(uploaded_file, sheet_name=matched_sheet, header=7)
-                        if "資産名称" in df.columns:
-                            df_valid = df.dropna(subset=["資産名称"]).copy()
-                            if "No." in df_valid.columns:
-                                df_valid = df_valid[df_valid["No."].astype(str) != "合計"]
+                        
+                        if "No." in df.columns:
+                            df_valid = df[df["No."].astype(str) != "合計"].copy()
+                        else:
+                            df_valid = df.copy()
                             
-                            if not df_valid.empty:
-                                combined_rows_A[key].append(df_valid)
-                                # C列（資産名称列）のユニークな値を収集
-                                for val in df_valid["資産名称"].dropna().unique():
-                                    all_c_names.add(str(val).strip())
+                        if not df_valid.empty:
+                            combined_rows_A[key].append(df_valid)
+                            
+                            # 【解決策】結合セルのズレを防ぐため、Excelの「C列のみ」を独立して読み込む
+                            df_c_only = pd.read_excel(
+                                uploaded_file, 
+                                sheet_name=matched_sheet, 
+                                header=7, 
+                                usecols="C"
+                            )
+                            # C列の値をテキスト化して重複なく収集
+                            for val in df_c_only.iloc[:, 0].dropna().unique():
+                                val_str = str(val).strip()
+                                if val_str and val_str != "合計" and val_str != "計":
+                                    all_c_names.add(val_str)
+                                    
             except Exception as e:
                 st.error(f"❌ {filename} の読み込みエラー: {e}")
         
         st.session_state.combined_rows_A = combined_rows_A
         st.session_state.c_column_unique_names = sorted(list(all_c_names))
 
-# 全体集計が完了している場合のみ、次のステップを表示
 if st.session_state.combined_rows_A:
     st.success("🎉 全体の集約用データ（ファイルA）の作成が完了しました！")
     
@@ -201,33 +209,24 @@ if st.session_state.combined_rows_A:
     with col2:
         st.subheader("🔍 ファイルB (個別抽出版)")
         if st.session_state.c_column_unique_names:
-            # 【変更点】 st.multiselect に変更し、複数選択可能に
             selected_names = st.multiselect(
-                "転記したい名称（C列）をすべて選択してください（複数可）：",
+                "転記したい名称（C列：部署名など）をすべて選択してください：",
                 options=st.session_state.c_column_unique_names,
                 placeholder="名称を選択または検索..."
             )
             
             if selected_names:
-                # 選択された複数の名称のいずれかに一致（isin）するデータを抽出
                 combined_rows_B = {key: [] for key, _ in TARGET_SHEET_KEYWORDS}
                 for key, dfs in st.session_state.combined_rows_A.items():
                     for df in dfs:
-                        # トリム（空白削除）して比較
-                        df_filtered = df[df["資産名称"].astype(str).str.strip().isin(selected_names)].copy()
-                        if not df_filtered.empty:
-                            combined_rows_B[key].append(df_filtered)
+                        # 【重要】各データの「C列目」に対応する値を正確に判定
+                        # header=7 で読み込んだデータフレームの、元Excel「C列」に相当する列インデックスを見つける
+                        # pandasの挙動を考慮し、左から3番目の実カラムデータを安全にチェック
+                        if len(df.columns) >= 3:
+                            # 結合セルの影響を考慮し、各行で「選ばれた名称」が含まれているかを厳密にフィルタリング
+                            # ここではデータフレームの左から3番目の列の値が合致するか検証
+                            df_filtered = df[df.iloc[:, 2].astype(str).str.strip().isin(selected_names)].copy()
+                            if not df_filtered.empty:
+                                combined_rows_B[key].append(df_filtered)
                 
-                # ファイルBの作成とダウンロードボタン表示
                 file_B_data = create_excel_file(combined_rows_B)
-                st.download_button(
-                    label=f"📥 選択した {len(selected_names)} 件を転記したファイルBをダウンロード",
-                    data=file_B_data,
-                    file_name="★【抽出】設備投資計画_複数選択版.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="download_filtered"
-                )
-            else:
-                st.info("💡 名称を1つ以上選択すると、ファイルBのダウンロードボタンが表示されます。")
-        else:
-            st.warning("C列（資産名称）にデータが見つかりませんでした。")
