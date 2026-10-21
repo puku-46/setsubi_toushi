@@ -51,7 +51,7 @@ uploaded_files = st.file_uploader(
 
 # Excel作成共通処理（openpyxl）
 def create_excel_file(source_combined_rows):
-    base_file = template_file if template_file else uploaded_files[0]
+    base_file = template_file if template_file else uploaded_files
     if hasattr(base_file, "seek"):
         base_file.seek(0)
     wb = openpyxl.load_workbook(base_file)
@@ -150,7 +150,6 @@ def create_excel_file(source_combined_rows):
 if uploaded_files:
     st.info(f"📁 現在 {len(uploaded_files)} 個のファイルが選択されています。")
     
-    # アップロードファイルが変わったらリセット
     if st.button("⚡ ① まず全体集計を実行する", type="primary"):
         combined_rows_A = {key: [] for key, _ in TARGET_SHEET_KEYWORDS}
         all_c_names = set()
@@ -178,7 +177,6 @@ if uploaded_files:
             except Exception as e:
                 st.error(f"❌ {filename} の読み込みエラー: {e}")
         
-        # セッションに保存して画面をキープ
         st.session_state.combined_rows_A = combined_rows_A
         st.session_state.c_column_unique_names = sorted(list(all_c_names))
 
@@ -203,29 +201,33 @@ if st.session_state.combined_rows_A:
     with col2:
         st.subheader("🔍 ファイルB (個別抽出版)")
         if st.session_state.c_column_unique_names:
-            # 抽出候補をプルダウンで選択（C列のデータから自動作成）
-            selected_name = st.selectbox(
-                "転記したい名称（C列）を選択してください：",
-                options=st.session_state.c_column_unique_names
+            # 【変更点】 st.multiselect に変更し、複数選択可能に
+            selected_names = st.multiselect(
+                "転記したい名称（C列）をすべて選択してください（複数可）：",
+                options=st.session_state.c_column_unique_names,
+                placeholder="名称を選択または検索..."
             )
             
-            if selected_name:
-                # 選択された名称だけでファイルB用のデータを再構築
+            if selected_names:
+                # 選択された複数の名称のいずれかに一致（isin）するデータを抽出
                 combined_rows_B = {key: [] for key, _ in TARGET_SHEET_KEYWORDS}
                 for key, dfs in st.session_state.combined_rows_A.items():
                     for df in dfs:
-                        df_filtered = df[df["資産名称"].astype(str).str.strip() == selected_name].copy()
+                        # トリム（空白削除）して比較
+                        df_filtered = df[df["資産名称"].astype(str).str.strip().isin(selected_names)].copy()
                         if not df_filtered.empty:
                             combined_rows_B[key].append(df_filtered)
                 
                 # ファイルBの作成とダウンロードボタン表示
                 file_B_data = create_excel_file(combined_rows_B)
                 st.download_button(
-                    label=f"📥 「{selected_name}」だけを転記したファイルBをダウンロード",
+                    label=f"📥 選択した {len(selected_names)} 件を転記したファイルBをダウンロード",
                     data=file_B_data,
-                    file_name=f"★【抽出】設備投資計画_{selected_name}.xlsx",
+                    file_name="★【抽出】設備投資計画_複数選択版.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="download_filtered"
                 )
+            else:
+                st.info("💡 名称を1つ以上選択すると、ファイルBのダウンロードボタンが表示されます。")
         else:
             st.warning("C列（資産名称）にデータが見つかりませんでした。")
